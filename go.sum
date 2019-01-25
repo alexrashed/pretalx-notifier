@@ -1,0 +1,4 @@
+github.com/gregdel/pushover v0.0.0-20180208231006-1e03358b8e7e h1:InUqbygFzzdNpgu2R2lsL5rY1NfrPuZsaOTIQfSru30=
+github.com/gregdel/pushover v0.0.0-20180208231006-1e03358b8e7e/go.mod h1:NbuXd8Iwy5dU99qFToB8mSE29qJOQNW/bphiV8CWj/k=
+github.com/jasonlvhit/gocron v0.0.0-20190121134850-6771d4b492ba h1:uQgbHQ3qODYqXXzEf5MPEXRYAtG86jlItxtXCaIrEe8=
+github.com/jasonlvhit/gocron v0.0.0-20190121134850-6771d4b492ba/go.mod h1:rwi/esz/h+4oWLhbWWK7f6dtmgLzxeZhnwGr7MCsTNk=

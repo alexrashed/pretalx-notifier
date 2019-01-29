@@ -2,15 +2,19 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/gregdel/pushover"
 	"github.com/jasonlvhit/gocron"
+	"github.com/kr/pretty"
+	"github.com/pkg/errors"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
+	"strings"
+	"time"
 )
 
 // submission json
@@ -22,22 +26,22 @@ type submission struct {
 	Description   string        `json:"description"`
 	DoNotRecord   bool          `json:"do_not_record"`
 	Duration      string        `json:"duration"`
-	Image         interface{}   `json:"image"`
-	IsFeatured    bool          `json:"is_featured"`
-	Slot          interface{}   `json:"slot"`
+	//Image         interface{}   `json:"image"`
+	//IsFeatured    bool          `json:"is_featured"`
+	//Slot          interface{}   `json:"slot"`
 	Speakers      []struct {
-		Avatar    interface{} `json:"avatar"`
+	//	Avatar    interface{} `json:"avatar"`
 		Biography string      `json:"biography"`
 		Code      string      `json:"code"`
 		Name      string      `json:"name"`
 	} `json:"speakers"`
 	State          string `json:"state"`
 	SubmissionType struct {
-		De string `json:"de"`
+	//	De string `json:"de"`
 		En string `json:"en"`
 	} `json:"submission_type"`
 	Title string      `json:"title"`
-	Track interface{} `json:"track"`
+	//Track interface{} `json:"track"`
 }
 
 // submissions page json
@@ -48,98 +52,135 @@ type submissions struct {
 	Results  []submission `json:"results"`
 }
 
-// reads the string value of an environment variable or an error if not set or empty
+// returns the string value of an environment variable or an error if not set or empty
 func getEnvStr(key string) (string, error) {
-	v := os.Getenv(key)
-	if v == "" {
-		return v, errors.New(fmt.Sprintf("environment variable %s empty", key))
+	value := os.Getenv(key)
+	if value == "" {
+		return value, fmt.Errorf(fmt.Sprintf("environment variable %s empty", key))
 	}
-	return v, nil
+	return value, nil
 }
 
-// reads the int value of an environment variable or an error if not set or empty
+// returns the int value of an environment variable or an error if not set or empty
 func getEnvInt(key string) (int, error) {
-	s, err := getEnvStr(key)
+	str, err := getEnvStr(key)
 	if err != nil {
 		return 0, err
 	}
-	v, err := strconv.Atoi(s)
+	value, err := strconv.Atoi(str)
 	if err != nil {
 		return 0, err
 	}
-	return v, nil
+	return value, nil
+}
+
+// returns the boole value of an environment variable or an error if not set or empty
+func getEnvBool(key string) (bool, error) {
+	str, err := getEnvStr(key)
+	if err != nil {
+		return false, err
+	}
+	value, err := strconv.ParseBool(str)
+	if err != nil {
+		return false, err
+	}
+	return value, nil
 }
 
 // reads the submissions from pretalx
-func getSubmissions(pretalxUrl string, pretalxAuthToken string) (submissions, error) {
+func getSubmissions(pretalxURL string, pretalxAuthToken string) (submissions, error) {
 	var submissions submissions
 	// TODO implement paging instead of using a limit of 1k
-	apiUrl := pretalxUrl + "/submissions?limit=1000"
-	log.Print("requesting submissions from " + apiUrl)
-	req, err := http.NewRequest("GET", apiUrl, nil)
+	apiURL := pretalxURL + "/submissions?limit=1000"
+	log.Print("requesting submissions from " + apiURL)
+	req, err := http.NewRequest("GET", apiURL, nil)
 	if err != nil {
-		return submissions, errors.New("request could not be created")
+		return submissions,  errors.Wrap(err, "request could not be created")
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Token " + pretalxAuthToken)
+	req.Header.Set("Authorization", "Token "+pretalxAuthToken)
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return submissions, errors.New("request to PreTalx failed")
+		return submissions, errors.Wrap(err, "request to PreTalx failed")
 	}
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return submissions, errors.New("reading response body failed")
+		return submissions, errors.Wrap(err, "reading response body failed")
 	}
 
 	err = json.Unmarshal(body, &submissions)
 	if err != nil {
-		return submissions, errors.New("un-marshalling response failed")
+		return submissions,  errors.Wrap(err, "un-marshalling response failed")
 	}
 	return submissions, nil
 }
 
 // sends the pushover notification on a new submission
-func notify(pushOverApp *pushover.Pushover, pushoverUserToken string, submission submission) (response *pushover.Response, err error) {
-	title := fmt.Sprintf("PreTalx: New %s", submission.SubmissionType.En)
-	message := fmt.Sprintf("A new %s with the title '%s' has been submitted.", submission.SubmissionType.En, submission.Title)
+func notify(pushOverApp *pushover.Pushover, pushoverUserToken, pretalxURL string, messages []string) (response *pushover.Response, err error) {
+	title := fmt.Sprintf("PreTalx: Changed submissions detected")
+	message := strings.Join(messages, "\n")
 	recipient := pushover.NewRecipient(pushoverUserToken)
-	messageObject := pushover.NewMessageWithTitle(message, title)
+
+	// remove the API part from the URL
+	r := regexp.MustCompile(`(.*).*/.*/.*/.+/?`)
+	url := r.FindString(pretalxURL)
+
+	messageObject := &pushover.Message{
+		Message:     message,
+		Title:       title,
+		URL:         url,
+		URLTitle:    "PreTalx",
+		Timestamp:   time.Now().Unix(),
+		Retry:       60 * time.Second,
+		DeviceName:  "PreTalx-Notifier",
+		Sound:       pushover.SoundCosmic,
+	}
 	response, err = pushOverApp.SendMessage(messageObject, recipient)
 	return
 }
 
 // checks if there is any new submission on pretalx
-func checkSubmissions(knownSubmissions map[string]submission, pretalxUrl, pretalxAuthToken string,
+func checkSubmissions(knownSubmissions map[string]submission, onlyNew bool, pretalxURL, pretalxAuthToken string,
 	pushOverApp *pushover.Pushover, pushoverUserToken string) (err error) {
+	messages := []string{}
 	log.Print("checking for new submissions...")
-	submissions, err := getSubmissions(pretalxUrl, pretalxAuthToken)
+	submissions, err := getSubmissions(pretalxURL, pretalxAuthToken)
 	if err != nil {
 		log.Fatal(err)
 		return err
 	}
 
 	for _, submission := range submissions.Results {
-		if _, found := knownSubmissions[submission.Code]; !found {
-			log.Print("found a new submission, sending notification...")
-			// a new submission has been found
-			response, err := notify(pushOverApp, pushoverUserToken, submission)
-			if err != nil {
-				log.Fatal("sending notification on new submission failed")
-			} else {
-				log.Print("notification has been sent successfully:")
-				log.Print(response)
-			}
+		if knownSubmission, found := knownSubmissions[submission.Code]; !found {
+			log.Print("found a new submission, adding notification...")
+			messages = append(messages, fmt.Sprintf("A new %s with the title '%s' has been submitted.", submission.SubmissionType.En, submission.Title))
 			knownSubmissions[submission.Code] = submission
+		} else if !onlyNew {
+			if diff := pretty.Diff(knownSubmission, submission); diff != nil {
+				log.Print("found a changed submission, adding notification...")
+				messages = append(messages, fmt.Sprintf("The '%s' with the title '%s' has been changed: %s", submission.SubmissionType.En, submission.Title, diff))
+				knownSubmissions[submission.Code] = submission
+			}
 		}
 	}
+
+	if len(messages) > 0 {
+		response, err := notify(pushOverApp, pushoverUserToken, pretalxURL, messages)
+		if err != nil {
+			log.Fatal("sending notifications failed", err)
+		} else {
+			log.Print("notifications have been sent successfully:", response)
+		}
+	}
+
 	log.Print("submission check completed")
 	return
 }
 
 func main() {
 	// check if all env variables are present
-	pretalxUrl, err := getEnvStr("PRETALX_URL")
+	pretalxURL, err := getEnvStr("PRETALX_URL")
 	if err != nil {
 		log.Fatal(err)
 		panic(err)
@@ -149,7 +190,7 @@ func main() {
 		log.Fatal(err)
 		panic(err)
 	}
-	pushoverApiToken, err := getEnvStr("PUSHOVER_API_TOKEN")
+	pushoverAPIToken, err := getEnvStr("PUSHOVER_API_TOKEN")
 	if err != nil {
 		log.Fatal(err)
 		panic(err)
@@ -159,15 +200,20 @@ func main() {
 		log.Fatal(err)
 		panic(err)
 	}
-	pushOverApp := pushover.New(pushoverApiToken)
+	pushOverApp := pushover.New(pushoverAPIToken)
 	minutes, err := getEnvInt("MINUTES")
 	if err != nil {
-		log.Print("no minutes set, using default of 15 minutes")
+		log.Print("MINUTES not set, using default of 15 minutes")
 		minutes = 15
+	}
+	onlyNew, err := getEnvBool("ONLY_NEW")
+	if err != nil {
+		log.Print("ONLY_NEW not set, notifying on all changes")
+		onlyNew = false
 	}
 
 	log.Print("initially downloading submissions...")
-	submissions, err := getSubmissions(pretalxUrl, pretalxAuthToken)
+	submissions, err := getSubmissions(pretalxURL, pretalxAuthToken)
 	if err != nil {
 		log.Fatal(err)
 		panic(err)
@@ -181,6 +227,10 @@ func main() {
 
 	// schedule checkSubmissions every x minutes
 	log.Print(fmt.Sprintf("scheduling submission check every %d minutes", minutes))
-	gocron.Every(uint64(minutes)).Minutes().Do(checkSubmissions, knownSubmissions, pretalxUrl, pretalxAuthToken, pushOverApp, pushoverUserToken)
-	<- gocron.Start()
+
+	// simply ignore failures and reschedule the task
+	for ;; {
+		gocron.Every(uint64(minutes)).Minutes().Do(checkSubmissions, knownSubmissions, onlyNew, pretalxURL, pretalxAuthToken, pushOverApp, pushoverUserToken)
+		<-gocron.Start()
+	}
 }

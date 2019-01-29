@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestGetEnv(t *testing.T){
+func TestGetEnv(t *testing.T) {
 	err := os.Setenv("TEST_GET_ENV_STR_KEY", "TEST-VALUE")
 	if err != nil {
 		t.Fail()

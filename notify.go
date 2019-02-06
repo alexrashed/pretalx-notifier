@@ -18,6 +18,11 @@ func notify(pushOverApp *pushover.Pushover, pushoverUserToken, pretalxURL string
 	r := regexp.MustCompile(`(.*).*/.*/.*/.+/?`)
 	url := r.FindString(pretalxURL)
 
+	// strip the message if it is longer than 1k characters (limit of pushover)
+	if len(message) > 1024 {
+		message = message[:1020] + "..."
+	}
+
 	messageObject := &pushover.Message{
 		Message:     message,
 		Title:       title,

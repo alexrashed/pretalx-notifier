@@ -12,8 +12,9 @@ import (
 )
 
 // checks if there is any new submission on pretalx
+// return the suppressed error in order to avoid stopping the cron-job
 func checkSubmissions(knownSubmissions map[string]submission, onlyNew bool, pretalxURL, pretalxAuthToken string,
-	pushOverApp *pushover.Pushover, pushoverUserToken string) (err error) {
+	pushOverApp *pushover.Pushover, pushoverUserToken string) (suppressedError error) {
 	var messages []string
 	log.Print("checking for new submissions...")
 	submissions, err := getSubmissions(pretalxURL, pretalxAuthToken)

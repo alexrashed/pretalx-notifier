@@ -20,7 +20,7 @@ func checkSubmissions(knownSubmissions map[string]submission, onlyNew bool, pret
 	submissions, err := getSubmissions(pretalxURL, pretalxAuthToken)
 	if err != nil {
 		log.Fatal(err)
-		return err
+		return
 	}
 
 	for _, submission := range submissions.Results {
